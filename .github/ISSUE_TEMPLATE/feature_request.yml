@@ -1,7 +1,6 @@
 name: Feature or design proposal
 description: Propose a capability or protocol design change.
 title: "[Proposal]: "
-labels: ["proposal", "needs-discussion"]
 body:
   - type: textarea
     id: problem
