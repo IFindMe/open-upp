@@ -6,7 +6,7 @@ Open UPP is an open protocol project exploring how devices, services, applicatio
 
 > Give every participating entity a cryptographic identity and a standard way to establish secure, authorized communication with any other reachable entity—regardless of network, location, operating system, or application.
 
-**Status: Early design / research. Not production-ready.**
+**Status: The frozen two-peer v1 slice is implemented and verified — `CANON-1` framing, an untrusted out-of-band hint over TCP, a mutually authenticated proof-of-possession handshake, an X25519/HKDF/AES-GCM session, strict pairwise safety-number verification, explicit scoped grants, one application stream, and the `upp` CLI; unit/integration tests and a reproducible two-peer demo pass. Not production-ready: no relay service, discovery directory, revocation propagation, or post-quantum/TOFU support (TOFU is deferred and has no operator-reachable flag), and no UPP compatibility claim yet.**
 
 Open UPP is independent and is not affiliated with or endorsed by Tailscale, Tailcat, WireGuard, or their maintainers.
 
@@ -46,11 +46,18 @@ Applications and services
                   Network connectivity
 ```
 
-This is a conceptual model, not a finalized protocol stack. The first implementation may evaluate Tailcat as one transport backend. Tailcat's internal APIs and wire formats are not assumed stable or suitable as Open UPP's public protocol.
+This is a conceptual model, not a finalized protocol stack. The frozen v1 two-peer slice uses an untrusted out-of-band endpoint hint and TCP; Tailcat is an optional adapter seam with no finalized dependency. Tailcat's internal APIs and wire formats are not assumed stable or suitable as Open UPP's public protocol.
 
 ## Project status
 
-This repository currently contains project documentation and contributor scaffolding. It does not yet contain a working protocol implementation.
+This repository contains project documentation and a stdlib-only Go implementation of the **frozen two-peer v1 slice**: Ed25519 identity creation and verification, both-signed key rotation, and local-only revocation (`uppid`), plus a working wire protocol — `CANON-1` framing, an untrusted out-of-band hint resolved over TCP, a mutually authenticated handshake with proof of possession, an X25519/HKDF/AES-GCM session, strict pairwise safety-number verification before authorization, explicit scoped grants (no allow-from-fingerprint path), and a single application stream, exposed through the `upp` CLI. Unit, integration, and negative tests and a reproducible two-peer demo all pass. Revocation is local only, with no propagation; trust on first contact (TOFU) is deferred in v1 and has no operator-reachable flag.
+
+Documents for the implemented v1 slice:
+
+- [Protocol v1 specification](docs/architecture/protocol-v1.md) — frozen architecture and wire format.
+- [Getting started](docs/user-guide/getting-started.md) — two-peer user guide.
+
+Current documentation:
 
 - [Architecture](docs/architecture/README.md)
 - [Protocol design](docs/protocol/README.md)

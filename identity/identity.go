@@ -18,6 +18,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/IFindMe/open-upp/spec"
 )
 
 const (
@@ -26,12 +28,14 @@ const (
 	// SuiteEd25519 is the only suite implemented by this prototype.
 	SuiteEd25519 = "Ed25519"
 
-	domainFingerprint       = "open-upp/identity/fingerprint/v1"
-	domainKeyFingerprint    = "open-upp/identity/key-fingerprint/v1"
-	domainSelfBinding       = "open-upp/identity/self-bind/v1"
-	domainContinuity        = "open-upp/identity/continuity/v1"
-	domainAcknowledgment    = "open-upp/identity/acknowledgment/v1"
-	domainProofOfPossession = "open-upp/identity/pop/v1"
+	// Domain tags are single-sourced in spec; the byte values are unchanged so
+	// existing fingerprints, signatures and identity files remain valid.
+	domainFingerprint       = spec.TagFingerprint
+	domainKeyFingerprint    = spec.TagKeyFingerprint
+	domainSelfBinding       = spec.TagSelfBinding
+	domainContinuity        = spec.TagContinuity
+	domainAcknowledgment    = spec.TagAcknowledgment
+	domainProofOfPossession = spec.TagProofOfPossession
 )
 
 // statement is the deterministic structure signed by identity keys. Field
@@ -326,4 +330,122 @@ func canonical(st statement) []byte {
 		panic("identity: canonical statement encoding failed: " + err.Error())
 	}
 	return b
+}
+
+// EncodePublicRecord returns the CANON-1 public record transmitted during the
+// handshake. Private keys and the local revocation list are never included
+// (protocol-v1.md §4, W3 D4). Field order is fixed:
+// version, suite, class_hint, root_key, self_binding, count, then
+// (key, continuity, acknowledgment) for each log entry.
+func (id *Identity) EncodePublicRecord() ([]byte, error) {
+	if id == nil {
+		return nil, errors.New("nil identity")
+	}
+	if len(id.KeyLog) == 0 || len(id.KeyLog) > spec.MaxKeyLog {
+		return nil, fmt.Errorf("key log length %d outside [1,%d]", len(id.KeyLog), spec.MaxKeyLog)
+	}
+	fields := [][]byte{
+		spec.U8(uint8(id.Version)),
+		[]byte(id.Suite),
+		[]byte(id.ClassHint),
+		id.RootPublicKey,
+		id.SelfBinding,
+		spec.U32(uint32(len(id.KeyLog))),
+	}
+	for _, rec := range id.KeyLog {
+		fields = append(fields, rec.PublicKey, rec.Continuity, rec.Acknowledgment)
+	}
+	return spec.Canon(fields...), nil
+}
+
+// DecodePublicRecord decodes a CANON-1 public record into a private-key-free
+// Identity. It performs structural checks only; Verify() is the caller's
+// responsibility and enforces self-binding and both-signed continuity.
+func DecodePublicRecord(b []byte) (*Identity, error) {
+	f := spec.DecodeFields(b)
+	v := f.Next()
+	suite := f.Next()
+	classHint := f.Next()
+	root := f.Next()
+	self := f.Next()
+	count := f.Next()
+	if len(v) != 1 || len(count) != 4 {
+		return nil, errors.New("malformed public record header")
+	}
+	n := int(binary.BigEndian.Uint32(count))
+	if n < 1 || n > spec.MaxKeyLog {
+		return nil, fmt.Errorf("public record key count %d outside [1,%d]", n, spec.MaxKeyLog)
+	}
+	id := &Identity{
+		Version:       int(v[0]),
+		Suite:         string(suite),
+		ClassHint:     string(classHint),
+		RootPublicKey: bytes.Clone(root),
+		SelfBinding:   bytes.Clone(self),
+	}
+	for i := 0; i < n; i++ {
+		key := f.Next()
+		cont := f.Next()
+		ack := f.Next()
+		// The root entry has no predecessor, so its continuity and
+		// acknowledgment fields are legitimately empty; Verify() checks every
+		// subsequent (key, continuity, acknowledgment) triple.
+		if len(key) != ed25519.PublicKeySize ||
+			(i > 0 && (len(cont) != ed25519.SignatureSize || len(ack) != ed25519.SignatureSize)) {
+			return nil, fmt.Errorf("public record key entry %d has invalid length", i)
+		}
+		id.KeyLog = append(id.KeyLog, KeyRecord{
+			PublicKey:      bytes.Clone(key),
+			Continuity:     bytes.Clone(cont),
+			Acknowledgment: bytes.Clone(ack),
+		})
+	}
+	if err := f.Done(); err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(id.KeyLog[0].PublicKey, id.RootPublicKey) {
+		return nil, errors.New("public record key log does not start at root key")
+	}
+	return id, nil
+}
+
+// PairwiseSafetyDigest returns the 32-byte digest over two fingerprints in a
+// canonical, order-independent form (W3 D5, protocol-v1.md §6).
+func PairwiseSafetyDigest(fpA, fpB [sha256.Size]byte) [sha256.Size]byte {
+	lo, hi := fpA, fpB
+	if bytes.Compare(lo[:], hi[:]) > 0 {
+		lo, hi = hi, lo
+	}
+	sum := sha256.Sum256(spec.Canon([]byte(spec.TagSafetyNumber), lo[:], hi[:]))
+	return sum
+}
+
+// PairwiseSafetyNumber renders the pairwise digest as unpadded base32 in seven
+// groups (six of 8 characters plus a final group of 4). It is the only trust
+// basis for out-of-band verification; the legacy SafetyNumber() display is not.
+func PairwiseSafetyNumber(fpA, fpB [sha256.Size]byte) string {
+	sum := PairwiseSafetyDigest(fpA, fpB)
+	s := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:])
+	var b strings.Builder
+	for i := 0; i < len(s); i += 8 {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		end := i + 8
+		if end > len(s) {
+			end = len(s)
+		}
+		b.WriteString(s[i:end])
+	}
+	return b.String()
+}
+
+// VerifySignature checks a SignChallenge signature from a supplied public key
+// without requiring a local identity. It is used to verify the authenticity of
+// a locally stored scoped grant, whose authority key is recorded in the grant.
+func VerifySignature(pub ed25519.PublicKey, blob, sig []byte) bool {
+	if len(pub) != ed25519.PublicKeySize || len(blob) == 0 || len(sig) != ed25519.SignatureSize {
+		return false
+	}
+	return ed25519.Verify(pub, message(domainProofOfPossession, pub, blob), sig)
 }

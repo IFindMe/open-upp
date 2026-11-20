@@ -2,6 +2,8 @@
 
 This document proposes a peer identity model and key lifecycle for Open UPP, answering Issue #2: what an identity represents, and how it is created, verified, rotated, revoked, and recovered. It expands the identity concern of the [architecture notes](README.md) and applies the requirement and threat identifiers of the [threat model](../security/threat-model.md), a draft cited here as existing analysis, not settled law. It does not design discovery (Issue #3), transport backends such as Tailcat (Issue #4), the handshake, authorization policy, or any wire format; those appear only as interfaces or open dependencies.
 
+**Implementation and decision status.** A merged, stdlib-only Go prototype implements the local identity primitives described here — creation, verification, both-signed rotation, local-only revocation, the `uppid` CLI, and local unit tests — but no wire protocol. The v1 decisions previously left open here (encoding, hint/TCP transport, verification, grants, and M-8) are now frozen in the [Protocol v1 specification](protocol-v1.md): strict out-of-band pairwise safety-number verification is the gate, authorization requires an explicit scoped grant with no allow-from-fingerprint path, and revocation is local only, with no propagation. See also the [Getting started](../user-guide/getting-started.md) guide. The **Proposed** labels below are preserved for the identity-layer choices this document owns; the frozen v1 decisions govern the protocol slice.
+
 **Decision labels.** Every significant design decision carries exactly one label:
 
 - **Proposed** — a new recommendation made here, awaiting review; not established project direction.
@@ -60,7 +62,7 @@ Definitions follow the [threat model](../security/threat-model.md) where defined
 - **Accepted.** Tailcat, if adopted, is one optional adapter with no identity field depending on it (architecture notes).
 - The network is hostile and endpoints may be compromised (threat model, sections 5-6); synchronized clocks must not be assumed, so identity records carry no timestamps; the MVP targets two-party application streams.
 
-**Interface dependencies** (decided elsewhere): the session design provides fresh challenge data, transcript binding, and suite negotiation; Stage 2 of [ROADMAP.md](../../ROADMAP.md) selects statement encoding (section 15); authorization owns grants; discovery owns endpoint records.
+**Interface dependencies** (decided elsewhere): the session design provides fresh challenge data, transcript binding, and suite negotiation; Stage 2 v1 encoding is frozen in the [Protocol v1 specification](protocol-v1.md) (section 15 records the earlier question and its resolution); authorization owns the v1 explicit scoped grants; discovery owns endpoint records.
 
 ## 4. Identity data model
 
@@ -134,12 +136,13 @@ Logical structure, not a wire format; byte encoding is an open dependency (secti
 - **Comparison rules (Proposed).** Machine comparison normalizes case and whitespace, then compares the full 32-byte digest in constant time; only full-digest equality accepts, and characters outside the alphabet are rejected rather than mapped (no 0-to-O or 1-to-I leniency; RFC 4648 sections 3.3 and 3.4). Human comparison uses the full grouped string or a safety number (section 7), never a truncated prefix. A truncated fingerprint may appear as a decorative hint but **must not** base any trust decision; prefix collisions are a stated impersonation vector (threat model, T1).
 - **Key fingerprints (Proposed).** Each key in the log has a per-key fingerprint, `SHA-256(distinct domain-separation tag || suite || key octets)`, whose tag cannot collide with identity fingerprints; key fingerprints feed safety numbers and revocation statements.
 
-**Canonical encoding dependency.** Fingerprints are defined over suite-defined raw key octets, so their structure is fixed now and independent of statement serialization; the tag value and suite-identifier encoding ship with the Stage 2 test vectors (section 15). Statements must be deterministic and single-form, but the concrete framework is an open question (section 15).
+**Canonical encoding dependency.** Fingerprints are defined over suite-defined raw key octets, so their structure is fixed now and independent of statement serialization. The v1 tag registry and suite identifiers are frozen in the [Protocol v1 specification](protocol-v1.md) with fingerprint bytes unchanged: identity statements keep their deterministic fixed-field encoding, and new wire records use length-prefixed `CANON-1` (section 15 records the earlier open question and its resolution; golden byte vectors are defined in the W7 tests — `spec/spec_w7_test.go`, `identity/identity_w7_test.go`, `verify/verify_w7_test.go`).
 
 **Design decisions.**
 
 - **Proposed.** Local, authority-free creation with a self-binding statement; no registration step exists.
 - **Proposed.** Fingerprint definition, base32 display, full-digest constant-time comparison, and display-only truncation as specified above.
+- **Implementation note.** The merged `uppid` CLI still prints a `safety number:` line of 13 groups of 4 characters; that is a legacy display of a **single** identity fingerprint, deprecated presentation only and never accepted as the pairwise number for peer verification. The pairwise safety number used for verification is the full-digest, 8-character-group form of section 7 (see the [Protocol v1 specification](protocol-v1.md) and [Getting started](../user-guide/getting-started.md)).
 
 ## 7. First-contact verification
 
@@ -162,7 +165,7 @@ Alice                                        Bob
   v  authenticated identity binding; authorization decided separately
 ```
 
-Session and discovery designs own message formats. The safety number uses both identity fingerprints in sorted order, binding the pair symmetrically (resisting unknown-key-share) and giving both sides the same string. Because fingerprints are root-anchored, routine successor rotation (section 9) does not change it; only a root replacement does, forcing re-verification.
+Session and discovery designs own message formats. The safety number uses both identity fingerprints in sorted order, binding the pair symmetrically (resisting unknown-key-share) and giving both sides the same string. Because fingerprints are root-anchored, routine successor rotation (section 9) does not change it; only a root replacement does, forcing re-verification. In the frozen v1 flow this pairwise number is the strict verification gate: the full digest is compared in constant time, and the display uses 8-character base32 groups — not the legacy single-identity 4-character display code.
 
 **Issue #2 question 6 — how does first contact prevent key substitution?** **Proposed.** Four cumulative checks: (1) the in-band record must carry a continuity chain from presented root to current key, and the current key must prove possession over fresh session data, so a copied identity without private keys fails; (2) the out-of-band safety number binds both parties' exact root keys, so an attacker substituting their own root yields different safety numbers; (3) transcripts bind identity and negotiated suites, so a relayed or downgraded handshake cannot change the binding (M-2, M-7); (4) verified fingerprints are pinned, so key changes surface against prior state. If (2) has not happened the peer is **unverified** and must be shown as such; trust-on-first-use is only an explicitly marked degraded mode with change alerts, never a silent default.
 
@@ -173,6 +176,8 @@ Session and discovery designs own message formats. The safety number uses both i
 - **Proposed.** Pairwise safety numbers over identity fingerprints, verified out of band, pinning fingerprint plus last verified key.
 - **Proposed.** Unverified-by-default status; TOFU permitted only as an explicitly marked degraded mode with change alerts.
 - **Open question (recorded in section 15):** which deployment-level trust anchors beyond pairwise verification are permitted; this document selects none.
+
+**Implementation note (resolved v1 policy).** The v1 user flow requires strict out-of-band pairwise safety-number verification before any grant or session; verification is never authority. There is no degraded or trust-on-first-use path in v1: the TOFU mechanism stays frozen as an explicitly marked degraded mode for a future version and is deferred, not shipped — no operator-reachable flag, prompt, or degraded state. A verified pin may be reused across sessions as change-detection state only: each session still requires a fresh proof of possession, a valid continuity chain, and a fresh out-of-band confirmation; any fingerprint or key change raises a change alert and requires re-verification, and root replacement forces full re-verification and a new explicit grant.
 
 ## 8. Authentication and authorization boundaries
 
@@ -224,7 +229,7 @@ Logical structure; not a wire format.
 
 **Distribution and offline peers.** Local enforcement is specified: a locally known revoked identity MUST be denied at session establishment (trace SR-7, M-8), and revocation material must be authenticated whatever channel carries it (trace SR-4). The publication and propagation mechanism — list, status service, signed exchange, or gossip — plus cache freshness is an open question (section 15), mirroring threat model section 10. Offline peers therefore keep trusting a revoked key until they learn otherwise: the threat model's "Revocation latency" residual (section 9), not papered over.
 
-**Scope note.** Whether identity-key revocation enters MVP scope depends on the Stage 4 scope decision for M-8, which the threat model marks conditional. This document recommends including it (Proposed): deny-at-establishment is local, testable, and needs no propagation machinery; if the decision goes the other way, the design moves intact to post-MVP.
+**Scope note (resolved for v1).** M-8 identity-key revocation is **included** in the v1 slice: deny-at-establishment for locally known bad keys, and termination of a live session on locally known revocation, with no propagation, status service, or signed root-revocation authority. This supersedes the earlier conditional wording in the threat model; the local-only posture matches the recommendation originally marked Proposed here.
 
 ## 11. Backup and recovery
 
@@ -278,9 +283,9 @@ Each entry pairs a mitigation with its residual risk (draft threat-model identif
 
 ## 15. Open questions
 
-Genuinely undecided; nothing elsewhere answers them, and other sections cross-reference these entries.
+Genuinely undecided unless marked resolved; nothing elsewhere answers the open entries, and other sections cross-reference them.
 
-- **Open question: canonical encoding framework.** Which deterministic encoding and canonicalization rules identity statements (self-binding, successor, acknowledgment, revocation) will use, and the exact tag strings and suite registry values. Required properties are fixed here (deterministic, single canonical form, domain-separated, cross-implementation test vectors); the framework belongs to Stage 2 of [ROADMAP.md](../../ROADMAP.md).
+- **Resolved for v1 (previously: canonical encoding framework).** The v1 encoding is frozen in the [Protocol v1 specification](protocol-v1.md): a fixed tag registry (identity fingerprint bytes unchanged), the existing deterministic fixed-field encoding retained for identity statements, and `CANON-1` length-prefixed encoding for new wire records. Golden byte vectors are defined in the W7 tests (`spec/spec_w7_test.go`, `identity/identity_w7_test.go`, `verify/verify_w7_test.go`); cross-language interoperability remains Stage 5.
 - **Open question: revocation publication and propagation.** What mechanism carries revocation — list, status service, signed exchange, or gossip — and how cache freshness, offline behavior, and false-revocation resistance work. Mirrors threat model section 10; post-MVP per SR-7.
 - **Open question: does recovery preserve identity?** Verbatim from threat model section 10. Section 11 defers all mechanisms and states only requirements, so the answer is untouched here.
 - **Open question: multi-device and principal binding.** Whether Open UPP will support statements binding several device identities to one principal, how a compromised device is removed from a principal's set, and whether delegation, cross-signing, or nothing is the model.
@@ -292,7 +297,7 @@ Genuinely undecided; nothing elsewhere answers them, and other sections cross-re
 
 ## 16. MVP recommendations
 
-**In scope for the MVP (Proposed).** Local root key generation (Ed25519) with a self-binding statement, no registration; section 6 fingerprint rules with test vectors once encoding work lands; the first-contact flow (in-band exchange, out-of-band safety numbers, pinning, unverified status otherwise) with documented risk (M-12); sign-only identity keys distinct from session and transport keys (M-1, SR-2); rotation via both-signed successor statements with stable fingerprints and explicit confirmation on root replacement; identity-layer revocation with local deny at establishment, subject to the M-8 Stage 4 scope decision; and negative tests for substitution, replay without possession, broken chains, truncated-fingerprint acceptance, and log leakage (M-13, M-10).
+**In scope for the MVP (Proposed).** Local root key generation (Ed25519) with a self-binding statement, no registration; section 6 fingerprint rules with golden byte vectors defined in the W7 tests; the first-contact flow (in-band exchange, out-of-band safety numbers, pinning, unverified status otherwise) with documented risk (M-12); sign-only identity keys distinct from session and transport keys (M-1, SR-2); rotation via both-signed successor statements with stable fingerprints and explicit confirmation on root replacement; identity-layer revocation with local deny at establishment and local live-session termination (M-8 included for v1, no propagation); and negative tests for substitution, replay without possession, broken chains, truncated-fingerprint acceptance, and log leakage (M-13, M-10).
 
 **Explicitly out of scope for the MVP.**
 
@@ -308,17 +313,17 @@ Genuinely undecided; nothing elsewhere answers them, and other sections cross-re
 - **INV-4 (Proposed).** Trust decisions MUST use the full fingerprint digest; a truncated fingerprint MUST NOT be the sole basis for authentication or trust.
 - **INV-5 (Proposed).** Where out-of-band verification has not occurred, the peer MUST be presented as unverified and MUST NOT be counted as verified.
 - **INV-6 (Proposed).** Identity keys MUST NOT be used for encryption or session key derivation, and session or transport keys MUST NOT sign identity statements (SR-2, M-1).
-- **INV-7 (Proposed; contingent on the M-8 scope decision and the session design).** A locally known revoked identity key MUST be denied at session establishment, and behavior for an existing session on locally known revocation MUST be defined and tested.
+- **INV-7 (included for v1, local only; session design owns live termination).** A locally known revoked identity key MUST be denied at session establishment, and a live session MUST be terminated on locally known revocation. No propagation, remote status service, or signed root-revocation authority is required or claimed.
 - **INV-8 (Proposed).** An identity fingerprint MUST be computable from the anchor alone and MUST NOT change when IP address, interface, endpoint, relay, or transport backend changes.
 - **INV-9 (Proposed, restating an Accepted principle as a test).** Identity verification MUST NOT grant authorization; no code path may derive an allow decision from fingerprint equality or key possession alone.
-- **INV-10 (dependency: the encoding open question in section 15).** Each identity statement MUST have exactly one canonical encoding, and cross-implementation test vectors MUST demonstrate identical fingerprints and verification results.
+- **INV-10 (dependency: the v1 encoding decision, section 15; see the [Protocol v1 specification](protocol-v1.md)).** Each identity statement MUST have exactly one canonical encoding, and cross-implementation test vectors MUST demonstrate identical fingerprints and verification results. The v1 decision keeps the existing identity-statement encoding and uses `CANON-1` for new wire records; the golden vectors are defined in the W7 tests (`spec/spec_w7_test.go`, `identity/identity_w7_test.go`, `verify/verify_w7_test.go`).
 
 **Migration considerations.**
 
 - *Algorithm migration:* new suites enter the registry; successors under a new suite preserve fingerprints; only root replacement changes a fingerprint and requires confirmation. Hybrid classical-plus-PQ suites fit as future registry entries without a format break.
 - *Post-quantum timeline:* NIST IR 8547 (final, October 2026) deprecates quantum-vulnerable public-key algorithms after 2030 and disallows them after 2035 under NIST standards, so the successor-key path must exist before then, though project policy is open (section 15).
 - *Format versioning and stability:* the format version is signed inside statements and verifiers reject versions they cannot parse; fingerprints stay stable across suite additions, format versions, and routine rotation because they commit only to the domain-separated root key — the compatibility promise peers may rely on. Rules for unknown fields belong to the future specification (section 15).
-- *No compatibility claim yet:* per the root README, no implementation may claim UPP compatibility until a versioned specification and conformance tests exist; this is design input, not that specification.
+- *No compatibility claim yet:* per the root README, no implementation may claim UPP compatibility until a versioned specification and conformance tests exist; the merged local identity prototype makes no such claim, and this document is design input, not that specification.
 
 ## 17. References
 

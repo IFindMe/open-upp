@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document records the current architectural direction. It is exploratory and is not a finalized specification.
+This document records the current architectural direction. It is exploratory and is not a finalized specification; the frozen v1 decisions are recorded in the [Protocol v1 specification](protocol-v1.md), and the user-facing flow is documented in the [Getting started](../user-guide/getting-started.md) guide. The frozen two-peer v1 slice — local identity primitives and the wire protocol itself — is implemented and verified.
 
 ## Core separation
 
@@ -22,17 +22,17 @@ A peer identity must remain stable when its IP address, network interface, relay
 
 ## Identity is not authorization
 
-Possession of a peer's public key proves control of a corresponding private key during an authenticated exchange. It does not grant permission to access arbitrary services. Authorization must be explicit, scoped, revocable, and auditable.
+Possession of a peer's public key proves control of a corresponding private key during an authenticated exchange. It does not grant permission to access arbitrary services. Authorization for v1 is an explicit, scoped local grant (deny by default, no allow-from-fingerprint path), checked against strict out-of-band pairwise safety-number verification, and revocation is local only — no propagation. Authorization must remain auditable.
 
 ## Transport abstraction
 
-The first research target is a Tailcat-backed transport adapter. The adapter boundary must prevent Tailcat-specific APIs, identifiers, and wire formats from leaking into the UPP protocol specification or application API.
+The frozen v1 two-peer slice uses an untrusted, out-of-band endpoint hint file and TCP; protection terminates at the UPP peers, not at the socket or a relay. Tailcat is an optional adapter seam, not a v1 dependency. The adapter boundary must prevent Tailcat-specific APIs, identifiers, and wire formats from leaking into the UPP protocol specification or application API.
 
 Tailcat's APIs and wire formats may be unstable. No dependency on them is finalized. Other peer-to-peer transports, relays, and conventional network paths may be evaluated.
 
-## Discovery is an open design question
+## Discovery: v1 frozen, broader models remain research
 
-Potential models include manual out-of-band exchange, local network discovery, federated rendezvous services, distributed lookup, and cached peer hints from multiple providers.
+For v1, discovery is an untrusted out-of-band endpoint hint (a local file) resolved to a TCP address; a hint is never identity or authorization evidence. Other models — local network discovery, federated rendezvous services, distributed lookup, and cached peer hints from multiple providers — remain research options.
 
 A single global directory is not assumed. Discovery must account for privacy leakage, Sybil resistance, availability, abuse, and stale records.
 
@@ -42,4 +42,6 @@ The initial interface should prioritize authenticated byte streams and service a
 
 ## Design notes
 
-- [Peer identity and key lifecycle](identity-and-key-lifecycle.md) — proposed identity model, fingerprint rules, rotation, revocation, and testable invariants (Issue #2). All choices are proposals unless explicitly marked otherwise; encoding and wire format remain open.
+- [Peer identity and key lifecycle](identity-and-key-lifecycle.md) — identity model, fingerprint rules, rotation, revocation, and testable invariants (Issue #2). Its choices remain proposals unless explicitly marked otherwise; the v1 encoding, transport, verification, and grant decisions are frozen in the [Protocol v1 specification](protocol-v1.md).
+- [Protocol v1 specification](protocol-v1.md) — frozen architecture, canonical encoding, and wire format.
+- [Getting started](../user-guide/getting-started.md) — two-peer user guide.
