@@ -10,7 +10,7 @@ This roadmap describes intended research milestones, not guaranteed delivery dat
 - [ ] Open initial design discussions.
 
 ## Stage 1 — Requirements and threat model
-- [ ] Define entities, identity lifecycle, and key rotation.
+- [x] Define entities, identity lifecycle, and key rotation.
 - [ ] Define trust, authorization, revocation, and recovery requirements.
 - [ ] Define attacker capabilities and security boundaries.
 - [ ] Define availability, privacy, and metadata goals.
