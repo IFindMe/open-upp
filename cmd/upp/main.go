@@ -11,10 +11,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	"github.com/IFindMe/open-upp/authz"
 	"github.com/IFindMe/open-upp/discovery"
@@ -28,15 +28,18 @@ import (
 const usage = `upp — two-peer Open UPP (protocol v1)
 
 Usage:
-  upp listen  [-identity PATH] [-hint PATH] [-grants PATH] [-pins PATH] [-addr HOST:PORT]
+  upp listen  [-identity PATH] [-hint PATH] [-grants PATH] [-pins PATH]
+              [-transport tailcat|tcp] [-service-port PORT] [-addr HOST:PORT]
   upp connect [-identity PATH] [-hint PATH] [-grants PATH] [-pins PATH]
-              [-resource NAME] [-op LIST]
+              [-transport tailcat|tcp] [-resource NAME] [-op LIST]
   upp verify -identity PATH -peer PATH [-sn "8-char groups"]
   upp grant add    -identity PATH -grants PATH -peer-fp HEX [-resource NAME] [-op LIST]
   upp grant revoke -grants PATH (-grant-id ID | -peer-fp HEX)
   upp grant list   [-grants PATH]
   upp help
 
+Tailcat is the default transport. -transport tcp is an explicit local-test
+fallback only; it never downgrades identity, verification or grant checks.
 All state files are written with mode 0600. Verification requires an explicit
 out-of-band pairwise safety-number comparison on every session; authorization
 requires an explicit scoped grant. Consent is per session and per grant.
@@ -125,8 +128,23 @@ func parseOps(raw string) ([]string, error) {
 	return parts, nil
 }
 
-func newPeer(id *identity.Identity, grantsPath, pinsPath, resource string, expected [32]byte) (*upp.Peer, error) {
+// newTransport is the sole composition point for transport selection: Tailcat
+// is the default; TCP is opt-in for local testing only. There is no runtime
+// auto-downgrade and the untrusted hint never selects the backend.
+func newTransport(name string, servicePort uint16) (transport.Transport, error) {
+	switch name {
+	case discovery.TransportTailcat:
+		return transport.Tailcat{ServicePort: servicePort, Timeout: spec.RouteTimeoutS * time.Second}, nil
+	case discovery.TransportTCP:
+		return transport.TCP{Timeout: spec.RouteTimeoutS * time.Second}, nil
+	default:
+		return nil, usageErr("unknown transport %q (want tailcat or tcp)", name)
+	}
+}
+
+func newPeer(tr transport.Transport, id *identity.Identity, grantsPath, pinsPath, resource string, expected [32]byte) (*upp.Peer, error) {
 	return upp.New(upp.Config{
+		Transport:      tr,
 		Identity:       id,
 		PinsPath:       pinsPath,
 		GrantsPath:     grantsPath,
@@ -144,7 +162,9 @@ func listen(args []string) error {
 	hintPath := fs.String("hint", "peer.hint", "endpoint hint output file")
 	grantsPath := fs.String("grants", "grants.json", "local scoped grant file")
 	pinsPath := fs.String("pins", "pins.json", "local pin file")
-	addr := fs.String("addr", "127.0.0.1:0", "bind address (LAN address for the two-host case)")
+	addr := fs.String("addr", "127.0.0.1:0", "TCP fallback bind address (LAN address for the two-host case)")
+	transportName := fs.String("transport", discovery.TransportTailcat, "transport: tailcat (default) or tcp (local-test only)")
+	servicePort := fs.Uint("service-port", uint(transport.DefaultServicePort), "UPP service port inside the Tailcat tunnel")
 	if err := fs.Parse(args); err != nil {
 		return usageErr("%v", err)
 	}
@@ -155,24 +175,24 @@ func listen(args []string) error {
 	if err != nil {
 		return err
 	}
-	ln, err := (transport.TCP{}).Listen(*addr)
+	tr, err := newTransport(*transportName, uint16(*servicePort))
+	if err != nil {
+		return err
+	}
+	bind := "" // Tailcat is addressed by capability, not a bind address
+	if *transportName == discovery.TransportTCP {
+		bind = *addr
+	}
+	ln, err := tr.Listen(bind)
 	if err != nil {
 		return spec.NewFailure(spec.RouteFailed, "could not reach peer after 3 attempts (5s timeout each)", "check the -hint file and network reachability")
 	}
 	defer ln.Close()
-	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
-	if !ok {
-		return usageErr("could not determine bound port")
-	}
-	host := tcpAddr.IP.String()
-	if host == "::" || host == "" {
-		host = "127.0.0.1"
-	}
-	p, err := newPeer(id, *grantsPath, *pinsPath, "stream", [32]byte{})
+	p, err := newPeer(tr, id, *grantsPath, *pinsPath, "stream", [32]byte{})
 	if err != nil {
 		return err
 	}
-	if err := discovery.Save(*hintPath, p.HintFor(host, uint16(tcpAddr.Port))); err != nil {
+	if err := discovery.Save(*hintPath, p.HintFor(ln.Endpoint())); err != nil {
 		return usageErr("cannot write hint: %v", err)
 	}
 	fmt.Fprintf(os.Stdout, "upp: listening: hint written to %s\n", *hintPath)
@@ -232,6 +252,7 @@ func connect(args []string) error {
 	pinsPath := fs.String("pins", "pins.json", "local pin file")
 	resource := fs.String("resource", "stream", "resource to authorize")
 	opRaw := fs.String("op", "open,read,write", "requested operations (subset of grant)")
+	transportName := fs.String("transport", discovery.TransportTailcat, "transport: tailcat (default) or tcp (local-test only)")
 	if err := fs.Parse(args); err != nil {
 		return usageErr("%v", err)
 	}
@@ -249,13 +270,17 @@ func connect(args []string) error {
 	if err != nil {
 		return usageErr("cannot load hint: %v", err)
 	}
-	p, err := newPeer(id, *grantsPath, *pinsPath, *resource, hint.SubjectFP)
+	tr, err := newTransport(*transportName, transport.DefaultServicePort)
+	if err != nil {
+		return err
+	}
+	p, err := newPeer(tr, id, *grantsPath, *pinsPath, *resource, hint.SubjectFP)
 	if err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	st, err := p.Dial(ctx, hint.Target())
+	st, err := p.Dial(ctx, transport.Endpoint{Addr: hint.Addr, Port: hint.Port})
 	if err != nil {
 		return err
 	}

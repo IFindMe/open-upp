@@ -16,6 +16,14 @@
 > and W4 stable tokens (`.opencode/reports/product-ready/designer-agent-W4-ux.md`). Section references below
 > point to those reports; the resolved v1 trust policy (`philosopher-agent-W5c-trust-policy.md`) is reflected
 > in §6 and §11.
+>
+> **Tailcat-core release (not part of this frozen spec):** [ADR-002](adr-002-tailcat-core.md) reverses the v1
+> transport non-goal (§10) and selects Tailcat as the default/primary connectivity core; that release has **landed
+> and is implemented and verified** (v2 two-peer flow). UPP identity, strict pairwise out-of-band verification,
+> explicit scoped authorization, and the no-TOFU policy in this document are inherited unchanged. A Tailcat `tc...`
+> address is a **secret bearer routing hint** — never identity or authority — TCP is an explicit local-test fallback
+> with no auto-downgrade, and Tailcat's wire format does not become UPP's public protocol. This document remains the
+> normative description of the shipped v1 baseline.
 
 ## 1. Scope
 
@@ -35,8 +43,9 @@ over both fingerprints, rendered for out-of-band comparison. *Grant* is a local,
 *Hint* is an untrusted out-of-band endpoint locator. *transcript hash (`th`)* commits to the handshake.
 
 **Version/suite registry** (W3 D2): protocol `1` only; identity suite `Ed25519`; KEX suite `X25519`; AEAD
-`AES-256-GCM`; KDF `HKDF-SHA256`; hash `SHA-256`. All primitives are Go 1.24 stdlib; `go.mod` has zero
-external dependencies. Any other version, suite, or extension bit is rejected; there is **no fallback**.
+`AES-256-GCM`; KDF `HKDF-SHA256`; hash `SHA-256`. All v1 protocol primitives use only the Go standard library;
+the Tailcat transport dependency lives outside this frozen v1 protocol slice (`go.mod` now requires Go 1.27.1 and
+`github.com/tailscale/tailcat v0.7.0`). Any other version, suite, or extension bit is rejected; there is **no fallback**.
 
 **Frozen defaults** (W3 D2; test-overridable):
 
@@ -270,8 +279,10 @@ From W2 "Security invariants" (which trace to INV-1..INV-9, AC3, SR-1..SR-11):
 Out of scope for protocol v1 / this slice:
 
 - Wire-format or identity-statement encoding changes that alter fingerprint bytes or existing signatures.
-- Tailcat or any external transport dependency; NAT traversal, relays, or cross-NAT rendezvous. The relay
-  sees framed ciphertext, sizes, timing, and endpoints; metadata privacy / anonymity is **not** provided.
+- Tailcat or any external transport dependency; NAT traversal, relays, or cross-NAT rendezvous **in v1**.
+  This non-goal is frozen for the shipped v1 slice only and is reversed by the landed Tailcat-core release
+  ([ADR-002](adr-002-tailcat-core.md), Tailcat as default/primary connectivity core; implemented and verified).
+  The relay sees framed ciphertext, sizes, timing, and endpoints; metadata privacy / anonymity is **not** provided.
 - TLS or transport-layer termination; AEAD terminates at UPP peers only.
 - Grant expiry, absolute timestamps, delegation/chain, and bearer capability tokens over the wire.
 - Revocation propagation, status services, offline cache freshness, or signed root-revocation authority

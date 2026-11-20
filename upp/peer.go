@@ -24,6 +24,10 @@ import (
 
 // Config supplies the local state and the terminal bindings for one peer.
 type Config struct {
+	// Transport is the injected connectivity backend (Tailcat by default, TCP
+	// as an explicit local-test fallback). It is required; UPP depends only on
+	// transport.Transport, never on a concrete implementation.
+	Transport  transport.Transport
 	Identity   *identity.Identity
 	PinsPath   string
 	GrantsPath string
@@ -43,6 +47,9 @@ type Peer struct {
 }
 
 func New(cfg Config) (*Peer, error) {
+	if cfg.Transport == nil {
+		return nil, fmt.Errorf("%s: transport is required", spec.UsageError)
+	}
 	if cfg.Identity == nil {
 		return nil, fmt.Errorf("%s: local identity is required", spec.UsageError)
 	}
@@ -65,9 +72,16 @@ func New(cfg Config) (*Peer, error) {
 // from the same source as the consent prompts.
 func (p *Peer) Reader() *bufio.Reader { return p.in }
 
-// HintFor builds the endpoint hint advertised by a listener.
-func (p *Peer) HintFor(addr string, port uint16) discovery.Hint {
-	return discovery.Hint{SubjectFP: p.cfg.Identity.Fingerprint(), Addr: addr, Port: port}
+// HintFor builds the endpoint hint advertised by a listener. Addr is opaque
+// (a tc... capability or a TCP host); the transport discriminator is stamped
+// from the injected backend and confers no trust.
+func (p *Peer) HintFor(ep transport.Endpoint) discovery.Hint {
+	return discovery.Hint{
+		SubjectFP: p.cfg.Identity.Fingerprint(),
+		Addr:      ep.Addr,
+		Port:      ep.Port,
+		Transport: p.cfg.Transport.Name(),
+	}
 }
 
 const confirmPrompt = "I compared the safety number above with the peer over an independent channel and it matches.\n" +
@@ -106,12 +120,15 @@ func declineFailure(timedOut bool) error {
 }
 
 // Dial routes via a dialable endpoint and returns a stream only after every
-// gate has passed. ctx is checked before routing and before handshake.
-func (p *Peer) Dial(ctx context.Context, addr string) (*Stream, error) {
+// gate has passed. ctx is checked before routing and before handshake. The
+// route timeout bounds only dialing; the session uses the caller's ctx.
+func (p *Peer) Dial(ctx context.Context, ep transport.Endpoint) (*Stream, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	conn, err := (transport.TCP{Timeout: spec.RouteTimeoutS * time.Second}).Dial(addr)
+	routeCtx, cancel := context.WithTimeout(ctx, spec.RouteTimeoutS*time.Second)
+	conn, err := p.cfg.Transport.Dial(routeCtx, ep)
+	cancel()
 	if err != nil {
 		return nil, spec.NewFailure(spec.RouteFailed,
 			"could not reach peer after 3 attempts (5s timeout each)",

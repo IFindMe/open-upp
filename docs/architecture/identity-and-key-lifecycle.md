@@ -1,8 +1,10 @@
 # Open UPP peer identity and key lifecycle
 
-This document proposes a peer identity model and key lifecycle for Open UPP, answering Issue #2: what an identity represents, and how it is created, verified, rotated, revoked, and recovered. It expands the identity concern of the [architecture notes](README.md) and applies the requirement and threat identifiers of the [threat model](../security/threat-model.md), a draft cited here as existing analysis, not settled law. It does not design discovery (Issue #3), transport backends such as Tailcat (Issue #4), the handshake, authorization policy, or any wire format; those appear only as interfaces or open dependencies.
+This document proposes a peer identity model and key lifecycle for Open UPP, answering Issue #2: what an identity represents, and how it is created, verified, rotated, revoked, and recovered. It expands the identity concern of the [architecture notes](README.md) and applies the requirement and threat identifiers of the [threat model](../security/threat-model.md), a draft cited here as existing analysis, not settled law. It does not design discovery (Issue #3), transport backends (Tailcat is now the default/primary connectivity core of the landed Tailcat-core release per [ADR-002](adr-002-tailcat-core.md), implemented and verified, owned by the transport architecture), the handshake, authorization policy, or any wire format; those appear only as interfaces or open dependencies.
 
 **Implementation and decision status.** A merged, stdlib-only Go prototype implements the local identity primitives described here — creation, verification, both-signed rotation, local-only revocation, the `uppid` CLI, and local unit tests — but no wire protocol. The v1 decisions previously left open here (encoding, hint/TCP transport, verification, grants, and M-8) are now frozen in the [Protocol v1 specification](protocol-v1.md): strict out-of-band pairwise safety-number verification is the gate, authorization requires an explicit scoped grant with no allow-from-fingerprint path, and revocation is local only, with no propagation. See also the [Getting started](../user-guide/getting-started.md) guide. The **Proposed** labels below are preserved for the identity-layer choices this document owns; the frozen v1 decisions govern the protocol slice.
+
+**Tailcat-core release (implemented and verified).** [ADR-002](adr-002-tailcat-core.md) selects Tailcat as the default/primary connectivity core and has landed; the v2 two-peer flow over Tailcat is implemented and verified. This reverses the earlier optional-adapter-only framing, but changes nothing this document owns: identity stays independent of every transport identifier, including a Tailcat `tc...` address (a secret bearer routing hint, never identity or authority), and identity verification never grants authorization. TCP remains an explicit local-test fallback only, with no auto-downgrade.
 
 **Decision labels.** Every significant design decision carries exactly one label:
 
@@ -19,7 +21,7 @@ No new choice here is labeled **Accepted**. Requirements traced from the draft t
 
 **In scope.** What an identity is and may represent; the logical identity record and fingerprint; creation; first-contact verification; separation of identity keys from session and transport keys; rotation and continuity; identity-layer revocation; backup and recovery posture; multi-device posture; identity-specific threats; testable invariants; migration considerations.
 
-**Out of scope.** Discovery, rendezvous, and relay protocols (Issue #3); transport adapters and Tailcat evaluation (Issue #4); handshake, session state machines, and wire encodings; authorization grants and delegation mechanics; service naming; anything requiring a global directory, mandatory identity provider, or production PKI — all non-goals ([ROADMAP](../../ROADMAP.md), [root README](../../README.md)).
+**Out of scope.** Discovery, rendezvous, and relay protocols (Issue #3); transport adapters (including Tailcat; see [ADR-002](adr-002-tailcat-core.md)) and transport evaluation (Issue #4); handshake, session state machines, and wire encodings; authorization grants and delegation mechanics; service naming; anything requiring a global directory, mandatory identity provider, or production PKI — all non-goals ([ROADMAP](../../ROADMAP.md), [root README](../../README.md)).
 
 **Goals.**
 
@@ -59,7 +61,7 @@ Definitions follow the [threat model](../security/threat-model.md) where defined
 
 - **Accepted.** No mandatory global authority, directory, or production PKI exists and the MVP must not require one (root README principle 7; threat model section 5; ROADMAP).
 - **Accepted.** Discovery data stays untrusted hints until authenticated ([security model](../security/README.md)).
-- **Accepted.** Tailcat, if adopted, is one optional adapter with no identity field depending on it (architecture notes).
+- **Accepted (updated by [ADR-002](adr-002-tailcat-core.md)).** Tailcat is the default/primary connectivity core of the landed Tailcat-core release (implemented and verified), but no identity field — fingerprint, pin, or grant subject — depends on a Tailcat address, WireGuard key, or any transport identifier. Identity independence from transport is absolute; the project's transport commitment is not.
 - The network is hostile and endpoints may be compromised (threat model, sections 5-6); synchronized clocks must not be assumed, so identity records carry no timestamps; the MVP targets two-party application streams.
 
 **Interface dependencies** (decided elsewhere): the session design provides fresh challenge data, transcript binding, and suite negotiation; Stage 2 v1 encoding is frozen in the [Protocol v1 specification](protocol-v1.md) (section 15 records the earlier question and its resolution); authorization owns the v1 explicit scoped grants; discovery owns endpoint records.

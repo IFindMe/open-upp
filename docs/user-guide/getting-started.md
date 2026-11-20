@@ -13,11 +13,20 @@
 > **Reader's goal:** go from two empty directories to one verified, authorized, closed byte stream — and know
 > what an error means. Source: `.opencode/reports/product-ready/designer-agent-W4-ux.md` (W4) and the `main`
 > code (`cmd/uppid/main.go`, `identity/identity.go`, `go.mod`).
+>
+> **Tailcat-core release (implemented and verified; [ADR-002](../architecture/adr-002-tailcat-core.md) landed):**
+> Tailcat is now the default/primary transport, and the v2 two-peer flow over Tailcat is implemented and verified.
+> The commands and loopback TCP flow below describe the **frozen v1 baseline** and remain valid as the explicit
+> local-test fallback; there is no auto-downgrade. UPP identity, pairwise verification, explicit scoped grants,
+> and the no-TOFU policy are unchanged. A Tailcat `tc...` address is a **secret bearer routing hint**: keep it in
+> the 0600 hint file and never treat it as identity or authority. Tailcat API/wire instability and best-effort,
+> rate-limited public DERP remain documented limitations.
 
 ## Before you begin
 
-- **Go 1.24 or newer** installed; `go version` works. The module `github.com/IFindMe/open-upp` has zero
-  external dependencies, so no package download is needed.
+- **Go 1.27.1** installed (required by `go.mod`); `go version` works. The module `github.com/IFindMe/open-upp`
+  depends on `github.com/tailscale/tailcat v0.7.0` for the default transport, so module downloads are needed on
+  a fresh machine.
 - **Two terminals** — Terminal A (the listener, "Alice") and Terminal B (the connector, "Bob"). The demo runs
   on loopback (`127.0.0.1`), so no public IP and no inbound port forwarding are required.
 - **An independent channel** for the safety-number comparison (a phone call, chat, or in-person reading).
@@ -34,7 +43,7 @@
 
 ```sh
 cd /path/to/open-upp
-go version                 # expect go1.24 or newer
+go version                 # expect go1.27.1 (required by go.mod)
 go test ./...              # full test suite passes
 go build ./cmd/uppid       # produces ./uppid
 ```
@@ -244,12 +253,13 @@ upp: authorization_denied: no enabled scoped grant covers peer <FP> for stream/w
 - Verification never implies authorization; only an explicit scoped grant does.
 - Prompts default to **deny** and require the literal `yes`; there is no bypass flag and no TOFU prompt — v1 has no trust-on-first-use path.
 - A retained pin never skips verification: each session needs fresh proof of possession, a valid continuity chain, and a fresh out-of-band confirmation; any fingerprint/key change requires re-verification and a new grant.
-- A hint file or public record is an untrusted locator/input, never identity evidence.
+- A hint file or public record is an untrusted locator/input, never identity evidence. In the landed Tailcat-core release, the `tc...` address is a secret bearer routing hint: protect it like a secret, but never treat it as identity or authority.
 - Nothing prints private keys, passphrases, transcript bytes, or session material.
 - Errors are one plain sentence plus a stable token; no stack traces or raw bytes.
 
 ## Traceability and open items
 
+- This guide documents the shipped v1 (hint-over-TCP) baseline and the landed Tailcat-core release (Tailcat default/primary transport, implemented and verified); its ADR is at [ADR-002](../architecture/adr-002-tailcat-core.md).
 - Commands, flags, prompt text, exit codes, and error lines follow W4 §1–§5 and §7; `uppid` output and module
   details were verified against `cmd/uppid/main.go`, `identity/identity.go:299-307`, and `go.mod`.
 - Details not fixed by W4: the exact command that produces the peer public-record file consumed by

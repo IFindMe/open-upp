@@ -12,12 +12,21 @@ import (
 	"github.com/IFindMe/open-upp/authz"
 	"github.com/IFindMe/open-upp/identity"
 	"github.com/IFindMe/open-upp/spec"
+	"github.com/IFindMe/open-upp/transport"
 )
+
+// epFor converts a loopback TCP test listener into the widened endpoint. These
+// tests exercise the explicit TCP fallback, not Tailcat/DERP.
+func epFor(t *testing.T, ln net.Listener) transport.Endpoint {
+	t.Helper()
+	return transport.Endpoint{Addr: "127.0.0.1", Port: uint16(ln.Addr().(*net.TCPAddr).Port)}
+}
 
 // smokeConfig builds one side of the two-peer smoke test. Consent is supplied
 // through the same stdin prompt path the CLI uses; no bypass flag exists.
 func smokeConfig(id *identity.Identity, dir, grants, pins string, expected [32]byte) Config {
 	return Config{
+		Transport:      transport.TCP{},
 		Identity:       id,
 		GrantsPath:     filepath.Join(dir, grants),
 		PinsPath:       filepath.Join(dir, pins),
@@ -108,7 +117,7 @@ func TestTwoPeerSmoke(t *testing.T) {
 		serverDone <- st.CloseWrite()
 	}()
 
-	st, err := client.Dial(context.Background(), ln.Addr().String())
+	st, err := client.Dial(context.Background(), epFor(t, ln))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +183,7 @@ func TestNoGrantDenied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.Dial(context.Background(), ln.Addr().String())
+	_, err = client.Dial(context.Background(), epFor(t, ln))
 	var f *spec.Failure
 	if !errors.As(err, &f) || f.Token != spec.AuthorizationDenied {
 		t.Fatalf("error = %v, want authorization_denied", err)
