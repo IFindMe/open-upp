@@ -37,6 +37,14 @@ TRANSITIONS = {
     "completed": set(),
     "cancelled": set(),
 }
+WORKFLOW_STATUSES = {"active", "completed", "blocked", "cancelled"}
+WORKFLOW_TRANSITIONS = {
+    "active": {"blocked", "cancelled", "completed"},
+    "blocked": {"active", "cancelled"},
+    "completed": set(),
+    "cancelled": set(),
+}
+WORKFLOW_REASON_REQUIRED = {"blocked", "cancelled", "completed"}
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 REASON_REQUIRED = {"blocked", "failed", "cancelled", "completed"}
 
@@ -316,6 +324,40 @@ def command_status(args: argparse.Namespace) -> None:
     print(f"{args.task_id}: {before} -> {args.status}")
 
 
+def command_workflow_status(args: argparse.Namespace) -> None:
+    workflow_id = require_id(args.workflow_id, "workflow ID")
+    if args.status not in WORKFLOW_STATUSES:
+        raise ValueError(f"invalid workflow status: {args.status}")
+    directory, state_path, event_path = paths(Path.cwd(), workflow_id)
+    with locked(directory):
+        data = load_state(state_path)
+        existing_errors = validate_state(data, workflow_id)
+        if existing_errors:
+            raise ValueError("; ".join(existing_errors))
+        before = data["status"]
+        if args.status not in WORKFLOW_TRANSITIONS[before]:
+            raise ValueError(f"invalid workflow transition: {before} -> {args.status}")
+        reason = (args.reason or "").strip()
+        if args.status in WORKFLOW_REASON_REQUIRED and not reason:
+            raise ValueError(f"--reason is required when transitioning workflow to {args.status}")
+        if args.status == "completed":
+            tasks = data.get("tasks", [])
+            if not tasks:
+                raise ValueError("cannot complete a workflow with no tasks")
+            incomplete = [t["id"] for t in tasks if t.get("status") != "completed"]
+            if incomplete:
+                raise ValueError(f"cannot complete workflow: tasks not completed: {', '.join(incomplete)}")
+        timestamp = now()
+        data["status"] = args.status
+        data["updated_at"] = timestamp
+        errors = validate_state(data, workflow_id)
+        if errors:
+            raise ValueError("; ".join(errors))
+        atomic_json(state_path, data)
+        append_event(event_path, event(workflow_id, "workflow.status_changed", None, before, args.status, reason))
+    print(f"workflow {workflow_id}: {before} -> {args.status}")
+
+
 def command_show(args: argparse.Namespace) -> None:
     workflow_id = require_id(args.workflow_id, "workflow ID")
     directory, state_path, _ = paths(Path.cwd(), workflow_id)
@@ -379,6 +421,12 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--status", required=True, choices=sorted(STATUSES))
     status.add_argument("--reason", default="")
     status.set_defaults(func=command_status)
+
+    workflow_status = sub.add_parser("set-workflow-status", help="transition the workflow-level status")
+    workflow_status.add_argument("--workflow-id", required=True)
+    workflow_status.add_argument("--status", required=True, choices=sorted(WORKFLOW_STATUSES))
+    workflow_status.add_argument("--reason", default="")
+    workflow_status.set_defaults(func=command_workflow_status)
 
     show = sub.add_parser("show", help="show the authoritative workflow state")
     show.add_argument("--workflow-id", required=True)
