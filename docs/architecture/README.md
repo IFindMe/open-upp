@@ -39,3 +39,7 @@ A single global directory is not assumed. Discovery must account for privacy lea
 ## Application interface
 
 The initial interface should prioritize authenticated byte streams and service access. UDP datagrams and TUN-based IP networking should be considered only after session semantics, authorization, and transport behavior are validated.
+
+## Design notes
+
+- [Peer identity and key lifecycle](identity-and-key-lifecycle.md) — proposed identity model, fingerprint rules, rotation, revocation, and testable invariants (Issue #2). All choices are proposals unless explicitly marked otherwise; encoding and wire format remain open.
