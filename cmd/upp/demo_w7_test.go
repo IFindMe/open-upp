@@ -66,9 +66,11 @@ func TestCLITwoProcessNoGrantDenied(t *testing.T) {
 	hintPath := filepath.Join(dir, "server.hint")
 	listenCtx, stopListen := context.WithCancel(context.Background())
 	defer stopListen()
+	// The explicit TCP fallback keeps this deterministic two-process gate test
+	// independent of Tailcat/DERP availability (ADR-002 §6.7).
 	listen := exec.CommandContext(listenCtx, cliBin, "listen", "-identity", sPath,
 		"-grants", filepath.Join(dir, "server.grants"), "-pins", filepath.Join(dir, "server.pins"),
-		"-hint", hintPath, "-addr", "127.0.0.1:0")
+		"-hint", hintPath, "-transport", "tcp", "-addr", "127.0.0.1:0")
 	listen.Stdin = strings.NewReader("yes\n")
 	var lOut, lErr bytes.Buffer
 	listen.Stdout = &lOut
@@ -91,7 +93,7 @@ func TestCLITwoProcessNoGrantDenied(t *testing.T) {
 
 	code, _, errOut := runCLI(t, "yes\n", "connect", "-identity", cPath, "-hint", hintPath,
 		"-grants", filepath.Join(dir, "client.missing.grants"), "-pins", filepath.Join(dir, "client.pins"),
-		"-resource", "stream", "-op", "open,read,write")
+		"-transport", "tcp", "-resource", "stream", "-op", "open,read,write")
 	if code != 1 {
 		t.Fatalf("connect exit = %d, want 1; stderr:\n%s", code, errOut)
 	}

@@ -14,10 +14,12 @@ import (
 	"github.com/IFindMe/open-upp/authz"
 	"github.com/IFindMe/open-upp/identity"
 	"github.com/IFindMe/open-upp/spec"
+	"github.com/IFindMe/open-upp/transport"
 )
 
 func cfgFor(id *identity.Identity, dir, grant, pins, consent string, expected [32]byte, out io.Writer) Config {
 	return Config{
+		Transport:      transport.TCP{},
 		Identity:       id,
 		GrantsPath:     filepath.Join(dir, grant),
 		PinsPath:       filepath.Join(dir, pins),
@@ -64,7 +66,7 @@ func dialPair(t *testing.T, sc, cc Config, serverBody func(*Stream) error) (*Str
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, ce := client.Dial(context.Background(), ln.Addr().String())
+	st, ce := client.Dial(context.Background(), epFor(t, ln))
 	if ce != nil {
 		ln.Close() // unblock Accept if the client never connected
 	}
